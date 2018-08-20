@@ -22,13 +22,13 @@ class BuyPaymentWizard(models.TransientModel):
     date_end = fields.Date(u'结束日期', default=_default_date_end,
                            help=u'报表汇总的结束日期，默认为当前日期')
     s_category_id = fields.Many2one('core.category', u'供应商类别',
-                                    help=u'按指定供应商类别进行统计')
+                                    help=u'只统计选定的供应商类别')
     partner_id = fields.Many2one('partner', u'供应商',
-                                 help=u'按指定供应商进行统计')
+                                 help=u'只统计选定的供应商')
     order_id = fields.Many2one('buy.receipt', u'采购单号',
-                               help=u'按指定采购单号进行统计')
+                               help=u'只统计选定的采购单号')
     warehouse_dest_id = fields.Many2one('warehouse', u'仓库',
-                                        help=u'按指定仓库进行统计')
+                                        help=u'只统计选定的仓库')
     company_id = fields.Many2one(
         'res.company',
         string=u'公司',
@@ -55,12 +55,13 @@ class BuyPaymentWizard(models.TransientModel):
 
     def _compute_payment(self, receipt):
         '''计算该入库单的已付款和应付款余额'''
-        payment = 0
-        for order in self.env['money.order'].search(
-                [('state', '=', 'done')], order='name'):
-            for source in order.source_ids:
-                if source.name.name == receipt.name:
-                    payment += source.this_reconcile
+        # 查找入库单产生的结算单
+        domain = [('name', '=', receipt.name), ('state', '=', 'done')]
+        if receipt.order_id:    # 查找购货订单产生的结算单
+            domain = ['|',  '&', ('name', '=', receipt.name), ('state', '=', 'done'),
+                      '&', ('name', '=', receipt.order_id.name), ('state', '=', 'done')]
+        invoices = self.env['money.invoice'].search(domain)
+        payment = sum([invoice.reconciled for invoice in invoices])
         return payment
 
     def _compute_payment_rate(self, payment, amount):
@@ -80,6 +81,7 @@ class BuyPaymentWizard(models.TransientModel):
         # 计算该入库单的已付款
         payment = self._compute_payment(receipt)
         return {
+            's_category_id': receipt.partner_id.s_category_id.id,
             'partner_id': receipt.partner_id.id,
             'type': order_type,
             'date': receipt.date,

@@ -17,6 +17,29 @@ class TestBuyOrder(TransactionCase):
         self.env.ref('money.get_40000').money_order_done()
         self.env.ref('money.pay_2000').money_order_done()
 
+    def test_get_paid_amount(self):
+        ''' 测试：计算购货订单付款/退款 '''
+        self.order.buy_order_done()
+        receipt = self.env['buy.receipt'].search([('order_id', '=', self.order.id)])
+        receipt.payment = 1
+        receipt.bank_account_id = self.env.ref('core.comm').id
+        receipt.buy_receipt_done()
+        money = self.env['money.order'].search([('buy_id', '=', self.order.id)])
+        money.money_order_done()
+        self.assertTrue(self.order.paid_amount == 1)
+
+    def test_get_paid_amount_pay_divided(self):
+        ''' 测试：分批付款时，购货订单付款/退款 '''
+        self.order.invoice_by_receipt = False
+        plan = self.env['payment.plan'].create({
+            'buy_id': self.order.id,
+            'name': 'first',
+            'amount_money': 10,
+        })
+        plan.request_payment()
+        # 生成的发票未核销，已付金额为0
+        self.assertTrue(self.order.paid_amount == 0)
+
     def test_onchange_discount_rate(self):
         ''' 优惠率改变时，改变优惠金额，成交金额也改变'''
         amount_before = self.order.amount
@@ -166,6 +189,7 @@ class TestBuyOrder(TransactionCase):
         new_order = self.order.copy()
         for line in new_order.line_ids:
             line.goods_id = self.env.ref('goods.mouse').id
+            line.lot = 'mouse001'
             new_order.buy_generate_receipt()
         receipt = self.env['buy.receipt'].search(
             [('order_id', '=', new_order.id)])
@@ -224,6 +248,24 @@ class TestBuyOrder(TransactionCase):
         self.order.receipt_ids[0].buy_receipt_done()
         self.order.action_view_receipt()
 
+    def test_action_view_return(self):
+        '''查看生成的采购退货单'''
+        self.order.type = 'return'
+        self.env.ref('buy.buy_order_line_1').goods_id = self.env.ref('goods.cable').id
+        self.env.ref('buy.buy_order_line_1').attribute_id = False
+        self.env.ref('warehouse.wh_in_whin0').warehouse_dest_id = self.env.ref('warehouse.sh_stock').id
+        self.env.ref('warehouse.wh_in_whin0').approve_order()
+        # 生成一张采购退货单
+        self.order.buy_order_done()
+        self.order.action_view_return()
+        # 生成两张采购退货单
+        self.order.buy_order_draft()
+        self.order.buy_order_done()
+        for line in self.order.receipt_ids[0].line_out_ids:
+            line.goods_qty = 3
+        self.order.receipt_ids[0].buy_receipt_done()
+        self.order.action_view_return()
+
     def test_action_view_invoice(self):
         '''查看生成的结算单'''
         # 生成一张入库单，审核后查看结算单
@@ -240,6 +282,24 @@ class TestBuyOrder(TransactionCase):
         self.order.receipt_ids[0].buy_receipt_done()
         self.order.receipt_ids[0].buy_receipt_done()
         self.order.action_view_invoice()
+
+    def test_action_view_receipt(self):
+        """ 测试 查看发货/退货单 """
+        self.order.buy_order_done()
+        self.order.action_view_receipt()
+
+        receipt = self.env['buy.receipt'].search(
+            [('order_id', '=', self.order.id)])
+        for line in receipt.line_in_ids:
+            line.goods_qty = 1
+        receipt.buy_receipt_done()
+        self.order.action_view_receipt()
+
+    def test_buy_order_done_no_attribute(self):
+        '''检查属性是否填充'''
+        self.order.line_ids[0].attribute_id = False
+        with self.assertRaises(UserError):
+            self.order.buy_order_done()
 
 
 class TestBuyOrderLine(TransactionCase):
@@ -267,6 +327,11 @@ class TestBuyOrderLine(TransactionCase):
 
     def test_compute_all_amount_foreign_currency(self):
         '''外币测试：当订单行的数量、含税单价、折扣额、税率改变时，改变购货金额、税额、价税合计'''
+        # 单据上外币是公司本位币
+        self.order.currency_id = self.env.ref('base.CNY')
+        for line in self.order.line_ids:
+            line.price_taxed = 11.7
+        # 外币
         self.order.currency_id = self.env.ref('base.EUR')
         for line in self.order.line_ids:
             line.price_taxed = 11.7
@@ -278,13 +343,6 @@ class TestBuyOrderLine(TransactionCase):
                 line.tax_rate = -1
             with self.assertRaises(UserError):
                 line.tax_rate = 102
-
-    def test_inverse_price(self):
-        '''由不含税价反算含税价，保存时生效'''
-        for line in self.order.line_ids:
-            line.price_taxed = 0
-            line.price = 10
-            self.assertAlmostEqual(line.price_taxed, 11.7)
 
     def test_onchange_price(self):
         '''当订单行的不含税单价改变时，改变含税单价'''

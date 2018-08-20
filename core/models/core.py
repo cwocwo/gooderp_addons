@@ -4,6 +4,25 @@ import odoo.addons.decimal_precision as dp
 from odoo import api, fields, models
 from odoo.exceptions import UserError
 
+
+groupby_original = models.BaseModel._read_group_process_groupby
+
+
+@api.model
+def _read_group_process_groupby(self, gb, query):
+    res = groupby_original(self, gb, query)
+    split = gb.split(':')
+    gb_function = split[1] if len(split) == 2 else None
+    if gb_function and gb_function == 'day':
+        res['display_format'] = 'yyyy-MM-dd'    # 按 day 分组显示格式
+    if (gb_function and gb_function == 'month') or not gb_function:
+        res['display_format'] = 'yyyy-MM'   # 按 month 分组显示格式
+    return res
+
+
+models.BaseModel._read_group_process_groupby = _read_group_process_groupby
+
+
 # 单据自动编号，避免在所有单据对象上重载
 
 create_original = models.BaseModel.create
@@ -23,7 +42,7 @@ def create(self, vals):
 models.BaseModel.create = create
 
 
-# 不能删除已审核的单据，避免在所有单据对象上重载
+# 不能删除已确认的单据，避免在所有单据对象上重载
 
 unlink_original = models.BaseModel.unlink
 
@@ -33,7 +52,7 @@ def unlink(self):
     for record in self:
         if 'state' in record._fields.keys():
             if record.state == 'done':
-                raise UserError(u'不能删除已审核的单据！')
+                raise UserError(u'不能删除已确认的单据！')
 
         unlink_original(record)
 
@@ -54,10 +73,10 @@ class BaseModelExtend(models.AbstractModel):
         @api.multi
         def action_cancel(self):
             for record in self:
-                if self.state != 'draft':
+                if record.state != 'draft':
                     raise UserError(u'只能作废草稿状态的单据')
                 else:
-                    self.state = 'cancel'
+                    record.state = 'cancel'
             return True
         models.BaseModel.action_cancel = action_cancel
         return super(BaseModelExtend, self)._register_hook()
@@ -118,6 +137,14 @@ class CoreCategory(models.Model):
     _sql_constraints = [
         ('name_uniq', 'unique(type, name)', '同类型的类别不能重名')
     ]
+
+    @api.multi
+    def unlink(self):
+        for record in self:
+            if record.note:
+                raise UserError(u'不能删除系统创建的类别')
+
+        return super(CoreCategory, self).unlink()
 
 
 class Uom(models.Model):
@@ -181,6 +208,7 @@ class BankAccount(models.Model):
     _description = u'账户'
 
     name = fields.Char(u'名称', required=True)
+    num = fields.Char(u'账号')
     balance = fields.Float(u'余额', readonly=True,
                            digits=dp.get_precision('Amount'))
     active = fields.Boolean(u'启用', default=True)

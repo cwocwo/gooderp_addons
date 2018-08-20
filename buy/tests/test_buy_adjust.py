@@ -45,6 +45,7 @@ class TestBuyAdjust(TransactionCase):
                                  }),
                          (0, 0, {'goods_id': self.mouse.id,
                                  'quantity': 1,
+                                 'lot': 'mouse001',
                                  }),
                          (0, 0, {'goods_id': self.cable.id,
                                  'quantity': 1,
@@ -191,6 +192,17 @@ class TestBuyAdjust(TransactionCase):
         with self.assertRaises(UserError):
             adjust.buy_adjust_done()
 
+    def test_buy_adjust_done_no_attribute(self):
+        '''检查属性是否填充'''
+        adjust = self.env['buy.adjust'].create({
+            'order_id': self.order.id,
+            'line_ids': [(0, 0, {'goods_id': self.env.ref('goods.keyboard').id,
+                                 'quantity': 10,
+                                 })]
+        })
+        with self.assertRaises(UserError):
+            adjust.buy_adjust_done()
+
 
 class TestBuyAdjustLine(TransactionCase):
 
@@ -230,12 +242,6 @@ class TestBuyAdjustLine(TransactionCase):
                 line.tax_rate = -1
             with self.assertRaises(UserError):
                 line.tax_rate = 102
-
-    def test_inverse_price(self):
-        '''由不含税价反算含税价，保存时生效'''
-        for line in self.adjust.line_ids:
-            line.price = 10
-            self.assertAlmostEqual(line.price_taxed, 11.7)
 
     def test_onchange_price(self):
         '''当订单行的不含税单价改变时，改变含税单价'''

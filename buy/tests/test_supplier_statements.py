@@ -36,19 +36,12 @@ class TestSupplierStatements(TransactionCase):
         objReceipt = self.env['buy.receipt']
         receipt = objReceipt.search([('order_id', '=', buy_order.id)])
         receipt.buy_receipt_done()
-        objInvoice = self.env['money.invoice']
-        invoice = objInvoice.search([('name', '=', receipt.name)])
-        invoice.money_invoice_done()
         # 创建采购退货单记录
         buy_return = self.env.ref('buy.buy_return_order_1')
         buy_return.bank_account_id = False
         buy_return.buy_order_done()
         receipt_return = objReceipt.search([('order_id', '=', buy_return.id)])
         receipt_return.buy_receipt_done()
-        invoice_return = objInvoice.search([
-            ('name', '=', receipt_return.name)
-        ])
-        invoice_return.money_invoice_done()
 
     def test_supplier_statements_wizard(self):
         '''供应商对账单向导'''
@@ -96,3 +89,13 @@ class TestSupplierStatements(TransactionCase):
         for report in list(set(supplier_statement_goods) - set(supplier_statement_goods_init)):
             self.assertNotEqual(str(report.balance_amount), 'kaihe11')
             report.find_source_order()
+
+
+class TestPartner(TransactionCase):
+    def test_action_view_buy_history(self):
+        """ 测试 供应商购货记录（最近一年）"""
+        supplier_lenovo = self.env.ref('core.lenovo')
+        supplier_lenovo.action_view_buy_history()
+        # 测试 时间间隔大于1年的 if
+        self.env.user.company_id.start_date = '2016-01-01'
+        supplier_lenovo.action_view_buy_history()

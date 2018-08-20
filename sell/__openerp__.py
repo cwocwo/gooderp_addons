@@ -44,8 +44,10 @@
     'data': [
             'data/sell_data.xml',
             'security/groups.xml',
+            'security/rules.xml',
             'views/sell_view.xml',
             'views/customer_view.xml',
+            'views/approve_multi_sale_order_view.xml',
             'report/customer_statements_view.xml',
             'report/sell_order_track_view.xml',
             'report/sell_order_detail_view.xml',

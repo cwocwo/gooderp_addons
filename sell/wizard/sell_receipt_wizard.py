@@ -24,13 +24,13 @@ class SellReceiptWizard(models.TransientModel):
     c_category_id = fields.Many2one('core.category', u'客户类别',
                                     domain=[('type', '=', 'customer')],
                                     context={'type': 'customer'},
-                                    help=u'按指定客户类别进行统计')
+                                    help=u'只统计选定的客户类别')
     partner_id = fields.Many2one('partner', u'客户',
-                                 help=u'按指定客户进行统计')
+                                 help=u'只统计选定的客户')
     user_id = fields.Many2one('res.users', u'销售员',
-                              help=u'按指定销售员进行统计')
+                              help=u'只统计选定的销售员')
     warehouse_id = fields.Many2one('warehouse', u'仓库',
-                                   help=u'按指定仓库进行统计')
+                                   help=u'只统计选定的仓库')
     company_id = fields.Many2one(
         'res.company',
         string=u'公司',
@@ -57,12 +57,10 @@ class SellReceiptWizard(models.TransientModel):
 
     def _compute_receipt(self, delivery):
         '''计算该发货单的已收款'''
-        receipt = 0
-        for order in self.env['money.order'].search(
-                [('state', '=', 'done')], order='name'):
-            for source in order.source_ids:
-                if source.name.name == delivery.name:
-                    receipt += source.this_reconcile
+        invoices = self.env['money.invoice'].search([
+            ('name', '=', delivery.name),
+            ('state', '=', 'done')])
+        receipt = sum([invoice.reconciled for invoice in invoices])
         return receipt
 
     def _prepare_sell_receipt(self, delivery):
@@ -98,20 +96,43 @@ class SellReceiptWizard(models.TransientModel):
             'note': delivery.note,
         }
 
+    def compute_partner_receipt(self, partner):
+        """该客户所有收款单未核销金额合计数"""
+        orders = self.env['money.order'].search([
+            ('state', '=', 'done'),
+            ('partner_id', '=', partner.id)])
+        sum_amount = sum(order.to_reconcile for order in orders)
+        return sum_amount
+
     @api.multi
     def button_ok(self):
         self.ensure_one()
         res = []
+        dict_part = {}
         if self.date_end < self.date_start:
             raise UserError(u'开始日期不能大于结束日期！\n 所选的开始日期:%s 结束日期:%s' %
                             (self.date_start, self.date_end))
 
         delivery_obj = self.env['sell.delivery']
         for delivery in delivery_obj.search(self._get_domain(), order='partner_id'):
-            # 用查找到的发货单信息来创建一览表
-            line = self.env['sell.receipt'].create(
-                self._prepare_sell_receipt(delivery))
-            res.append(line.id)
+            if not dict_part.has_key(delivery.partner_id):
+                dict_part[delivery.partner_id] = delivery
+            else:
+                dict_part[delivery.partner_id] += delivery
+        for partner, deliverys in dict_part.iteritems():
+            for delivery in deliverys:
+                # 用查找到的发货单信息来创建一览表
+                line = self.env['sell.receipt'].create(
+                    self._prepare_sell_receipt(delivery))
+                res.append(line.id)
+            # 增加一行，编号是未核销预收款，已收款是该客户所有收款单未核销金额合计数，应收款余额为负的预收款
+            summary_line = self.env['sell.receipt'].create({
+                'partner_id': partner.id,
+                'order_name': u'未核销预收款',
+                'receipt': self.compute_partner_receipt(partner),
+                'balance': -self.compute_partner_receipt(partner),
+            })
+            res.append(summary_line.id)
 
         return {
             'name': u'销售收款一览表',

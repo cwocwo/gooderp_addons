@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo.tests.common import TransactionCase
-from odoo.exceptions import UserError
+from odoo.exceptions import UserError, ValidationError
 
 
 class TestProduction(TransactionCase):
@@ -28,6 +28,14 @@ class TestProduction(TransactionCase):
         self.disassembly_keyboard = self.browse_ref('warehouse.wh_move_line_9')
 
         self.overage_in = self.browse_ref('warehouse.wh_in_whin0')
+        in_mouse_1 = self.env.ref('warehouse.wh_move_line_12')
+        in_mouse_1.cost = in_mouse_1.cost_unit * in_mouse_1.goods_qty
+        in_mouse_2 = self.env.ref('warehouse.wh_move_line_mouse_2')
+        in_mouse_2.cost = in_mouse_2.cost_unit * in_mouse_2.goods_qty
+        in_keyboard = self.env.ref('warehouse.wh_move_line_13')
+        in_keyboard.cost = in_keyboard.cost_unit * in_keyboard.goods_qty
+        in_cable = self.env.ref('warehouse.wh_move_line_14')
+        in_cable.cost = in_cable.cost_unit * in_cable.goods_qty
         self.overage_in.approve_order()
 
         self.outsource_out1 = self.browse_ref('warehouse.outsource_out1')
@@ -45,6 +53,66 @@ class TestProduction(TransactionCase):
 
         self.assertEqual(self.assembly.state, 'done')
         self.assertEqual(self.disassembly.state, 'done')
+
+    def test_approve_outsource_goods_lots(self):
+        # 有批号委外加工单入库
+        self.outsource_out1.approve_feeding()
+        self.outsource_out1.lot = '123'
+        self.outsource_out1.approve_order()
+
+    def test_approve_assembly_disassembly_goods_lots(self):
+        # 有批号组装单入库
+        self.assembly.approve_feeding()
+        self.assembly.lot = '123'
+        self.assembly.approve_order()
+
+        # 有批号拆卸单组合产品出库
+        lot_id = self.env['wh.move.line'].search([('state', '=', 'done'),
+                                                  ('goods_id', '=', self.env.ref('goods.keyboard_mouse').id)])
+        self.disassembly.lot_id = lot_id.id
+        self.disassembly.approve_feeding()
+        self.disassembly.approve_order()
+
+    def test_assembly_apporve_exist_scape(self):
+        # 组装单成品入库存在报废
+        self.assembly_mutli.approve_feeding()
+        self.assembly_mutli_keyboard_mouse_1.goods_qty = 10
+        self.assembly_mutli_keyboard_mouse_2.scrap = True
+        # 请在公司上输入 废品库
+        with self.assertRaises(UserError):
+            self.assembly_mutli.approve_order()
+
+        self.env.user.company_id.wh_scrap_id = self.env.ref('warehouse.bj_stock').id
+        self.assembly_mutli.approve_order()
+
+        # 成品入库到废品仓的反审核
+        self.assembly_mutli.cancel_approved_order()
+
+    def test_disassembly_apporve_exist_scape(self):
+        # 拆卸单子产品入库存在报废
+        # 先组装，后拆卸可以正常出入库
+        self.assembly.approve_feeding()
+        self.assembly.approve_order()
+
+        self.disassembly.approve_feeding()
+        self.disassembly_mouse.scrap = True
+        self.disassembly_keyboard.scrap = True  # 为了覆盖move_line 的action_done 中最后一个else
+        self.env.user.company_id.wh_scrap_id = self.env.ref('warehouse.bj_stock').id
+        self.disassembly.approve_order()
+
+        # 成品入库到废品仓的反审核
+        self.disassembly.cancel_approved_order()
+
+    def test_outsource_apporve_exist_scape(self):
+        # 拆卸单子产品入库存在报废
+        self.outsource_out1.approve_feeding()
+        keyboard_mouse = self.env.ref('warehouse.wh_move_line_out3')
+        keyboard_mouse.scrap = True
+        self.env.user.company_id.wh_scrap_id = self.env.ref('warehouse.bj_stock').id
+        self.outsource_out1.approve_order()
+
+        # 成品入库到废品仓的反审核
+        self.outsource_out1.cancel_approved_order()
 
     def test_check_is_child_enable_assembly(self):
         # 组装 子件中不能包含与组合件中相同的 产品+属性
@@ -460,7 +528,7 @@ class TestProduction(TransactionCase):
         ''' 测试 拆卸单 onchange_goods_qty '''
         # has bom_id
         wh_disassembly_dis3 = self.browse_ref('warehouse.wh_disassembly_dis3')
-        wh_disassembly_dis3.goods_qty = 2
+        wh_disassembly_dis3.goods_qty = 1
         wh_disassembly_dis3.onchange_goods_qty()
 
     def test_disassembly_onchange_goods_qty_no_bom(self):
@@ -556,3 +624,75 @@ class TestProduction(TransactionCase):
     def test_disassembly_unlink(self):
         ''' 测试 拆卸单 删除 '''
         self.disassembly.unlink()
+
+    def test_assembly_approve_feeding_twice(self):
+        '''组装单：重复发料和入库报错'''
+        self.assembly.approve_feeding()
+        with self.assertRaises(UserError):
+            self.assembly.approve_feeding()
+
+        self.assembly.approve_order()
+        with self.assertRaises(UserError):
+            self.assembly.approve_order()
+
+        self.assembly.cancel_approved_order()
+        with self.assertRaises(UserError):
+            self.assembly.cancel_approved_order()
+
+    def test_disassembly_approve_feeding_twice(self):
+        '''拆卸单：重复发料和入库报错'''
+        # 先组装，后拆卸可以正常出入库
+        self.assembly.approve_feeding()
+        self.assembly.approve_order()
+        self.disassembly.approve_feeding()
+        with self.assertRaises(UserError):
+            self.disassembly.approve_feeding()
+
+        self.disassembly.approve_order()
+        with self.assertRaises(UserError):
+            self.disassembly.approve_order()
+
+        self.disassembly.cancel_approved_order()
+        with self.assertRaises(UserError):
+            self.disassembly.cancel_approved_order()
+
+
+    def test_outsource_approve_feeding_twice(self):
+        '''委外单：重复发料和入库报错'''
+        self.outsource_out1.approve_feeding()
+        with self.assertRaises(UserError):
+            self.outsource_out1.approve_feeding()
+
+        self.outsource_out1.approve_order()
+        with self.assertRaises(UserError):
+            self.outsource_out1.approve_order()
+
+        self.outsource_out1.cancel_approved_order()
+        with self.assertRaises(UserError):
+            self.outsource_out1.cancel_approved_order()
+
+
+class TestWhBom(TransactionCase):
+    ''' 测试物料清单明细 '''
+
+    def setUp(self):
+        super(TestWhBom, self).setUp()
+        self.bom = self.env.ref('warehouse.wh_bom_0')
+
+    def test_check_parent_child_unique(self):
+        '''判断同一个产品不能是组合件又是子件'''
+        with self.assertRaises(ValidationError):
+            self.bom.write({'line_child_ids': [(0, 0, {'goods_id': self.env.ref('goods.keyboard_mouse').id})]})
+
+
+class TestWhBomLine(TransactionCase):
+    ''' 测试物料清单明细 '''
+
+    def setUp(self):
+        super(TestWhBomLine, self).setUp()
+        self.bom = self.env.ref('warehouse.wh_bom_0')
+
+    def test_check_goods_qty(self):
+        '''验证商品数量大于0'''
+        with self.assertRaises(ValidationError):
+            self.bom.line_child_ids[0].goods_qty = 0

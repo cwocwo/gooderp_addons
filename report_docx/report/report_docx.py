@@ -10,6 +10,7 @@ from odoo.tools import misc
 import ooxml
 from ooxml import parse, serialize, importer
 import codecs
+from datetime import datetime
 
 import pdfkit
 _logger = logging.getLogger(__name__)
@@ -59,6 +60,8 @@ class DataModelProxy(object):
         if not temp:
             if field and field.type in ('integer', 'float'):
                 return 0
+        if field.type == 'float' and int(temp) == temp:
+            temp = int(temp)
 
         return temp or ''
 
@@ -67,6 +70,8 @@ class DataModelProxy(object):
             return ""
         temp = getattr(self.data, key)
         field = self.data._fields.get(key)
+        if isinstance(temp, unicode) and ('&' in temp or '<' in temp or '>' in temp):
+            temp = temp.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
         if isinstance(temp, models.Model):
             return DataModelProxy(temp)
@@ -86,7 +91,16 @@ class DataModelProxy(object):
 
     def __str__(self):
         '''支持直接在word 上写 many2one 字段'''
-        return self.data and self.data.display_name or ''
+        name = ''
+        if self.data and self.data.display_name:
+            name = self.data.display_name
+            if '&' in self.data.display_name:
+                name = name.replace('&', '&amp;')
+            if '<' in self.data.display_name:
+                name = name.replace('<', '&lt;')
+            if '>' in self.data.display_name:
+                name = name.replace('>', '&gt;')
+        return name
 
 
 class IterDataModelProxy(object):
@@ -175,6 +189,10 @@ class ReportDocx(report_sxw):
 
     def get_docx_data(self, cr, uid, ids, report, context):
         env = api.Environment(cr, uid, context)
+        # 打印时， 在消息处显示打印人
+        message = str((datetime.now()).strftime('%Y-%m-%d %H:%M:%S')) + ' ' + env.user.name + u' 打印了该单据'
+        env.get(report.model).message_post(body=message)
+
         return env.get(report.model).browse(ids)
 
     def _save_file(self, folder_name, file):

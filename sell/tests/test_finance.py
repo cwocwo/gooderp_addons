@@ -33,13 +33,11 @@ class TestMonthProductCost(TransactionCase):
         # 离输入期间最近的 对应产品的发出成本行 存在
         wh_in_rows = self.env['wh.in'].search([])
         wh_in_rows.write({'date': '2015-12-31 18:00:00'})
-        [wh_in_row.approve_order() for wh_in_row in wh_in_rows]
         self.env['month.product.cost'].generate_issue_cost(
             self.period_id_15, '2015-12-31')
 
         wh_out_2 = self.env.ref('warehouse.wh_out_whout1')
         wh_out_2.write({'date': '2016-1-31 18:00:00'})
-        [wh_out_2.approve_order() for wh_out_row in wh_out_rows]
         self.env['month.product.cost'].generate_issue_cost(
             self.period_id, '2016-01-31')
 
@@ -48,3 +46,13 @@ class TestMonthProductCost(TransactionCase):
         company.cost_method = 'fifo'
         self.env['month.product.cost'].generate_issue_cost(
             self.period_id, '2016-01-31')
+
+
+class TestPartner(TransactionCase):
+    def test_action_view_sell_history(self):
+        """ 测试 客户购货记录（最近一年）"""
+        customer_yixun = self.env.ref('core.yixun')
+        customer_yixun.action_view_sell_history()
+        # 测试 时间间隔大于1年的 if
+        self.env.user.company_id.start_date = '2016-01-01'
+        customer_yixun.action_view_sell_history()
